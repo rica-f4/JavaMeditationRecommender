@@ -1,6 +1,8 @@
 package compass.javaapirecommendation.service;
 
 import compass.javaapirecommendation.client.PythonEmbeddingsClient;
+import compass.javaapirecommendation.entity.Meditation;
+import compass.javaapirecommendation.entity.dto.MeditationDTO;
 import org.springframework.stereotype.Service;
 
 import com.mongodb.client.MongoClient;
@@ -13,6 +15,7 @@ import org.slf4j.LoggerFactory;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 
 /**
@@ -35,7 +38,8 @@ public class RecommendationService {
         this.pythonEmbeddingsClient = pythonEmbeddingsClient;
         this.mongoClient = mongoClient;
     }
-
+    private static final String MONGO_DATABASE_NAME = "Atma-Contents"; // Seu nome de banco de dados
+    private static final String MONGO_COLLECTION_NAME = "meditations"; // Sua coleção real de meditações
 
     /**
      * Gera um embedding para o texto fornecido chamando a API Python via Feign.
@@ -68,33 +72,48 @@ public class RecommendationService {
      * @return Uma lista de documentos do MongoDB representando as meditações recomendadas.
      * @throws RuntimeException se a busca no MongoDB falhar.
      */
-    public List<Document> searchMeditationsByVector(List<Double> embedding, int limit) {
-        logger.info("Realizando busca vetorial no MongoDB com embedding.");
+    public List<Meditation> searchMeditationsByVector(List<Double> embedding, int limit) {
+        logger.info("Realizando busca vetorial no MongoDB Atlas com embedding.");
         try {
-            // Acessa o banco de dados e a coleção.
-            // O nome do banco de dados agora é pego automaticamente das configurações
-            MongoDatabase database = mongoClient.getDatabase("Atma-Contents"); // Usar o nome do BD do seu properties
-            MongoCollection<Document> collection = database.getCollection("meditations"); // Mantenha o nome da sua coleção
+            MongoDatabase database = mongoClient.getDatabase(MONGO_DATABASE_NAME);
+            MongoCollection<Document> collection = database.getCollection(MONGO_COLLECTION_NAME);
 
-            // Exemplo de consulta de busca vetorial para MongoDB Atlas Vector Search
-            // Esta é uma representação simplificada. A consulta real pode ser mais complexa
-            // dependendo de como você indexou seus dados no MongoDB Atlas.
-            // O campo 'embedding_field' deve corresponder ao nome do campo em seus documentos
-            // onde o vetor de embedding da meditação é armazenado.
-            Document query = new Document("vectorSearch", embedding)
-                    .append("path", "embedding_field") // O nome do campo que contém o vetor
-                    .append("numCandidates", 100) // Número de candidatos a considerar (ajuste conforme necessário)
-                    .append("limit", limit); // O número de resultados a retornar
+            // CORREÇÃO: O operador $vectorSearch espera o NOME DO ÍNDICE como primeiro argumento.
+            // O vetor de busca, o campo e o limite são definidos DENTRO do objeto $vectorSearch.
+            Document vectorSearchStage = new Document("$vectorSearch",
+                    new Document("index", "meditations_vector_search") // O NOME do seu índice
+                            .append("queryVector", embedding) // O vetor de busca
+                            .append("path", "embedding") // O campo que contém o vetor no seu documento (corresponde ao seu modelo Meditation)
+                            .append("numCandidates", 100) // Número de candidatos a considerar (ajuste para desempenho vs. precisão)
+                            .append("limit", limit) // Limite de resultados a retornar
+            );
 
-            // Executa a agregação (pipeline) para a busca vetorial
             List<Document> results = collection.aggregate(
-                    Collections.singletonList(
-                            new Document("$vectorSearch", query)
-                    )
-            ).into(new java.util.ArrayList<>()); // Coleta os resultados em uma lista
+                    Collections.singletonList(vectorSearchStage)
+            ).into(new java.util.ArrayList<>());
 
-            logger.info("Busca vetorial no MongoDB concluída. {} resultados encontrados.", results.size());
-            return results;
+            logger.info("Busca vetorial no MongoDB concluída. {} resultados brutos encontrados.", results.size());
+
+            // Mapeia os documentos resultantes para objetos Meditation
+            return results.stream()
+                    .map(doc -> {
+                        Meditation meditation = new Meditation();
+                        meditation.setId(doc.getString("_id"));
+                        meditation.setName(doc.getString("name"));
+                        meditation.setType(doc.getString("type"));
+                        // A lista de keywords do MongoDB virá como List<String>
+                        meditation.setKeywords(doc.get("keywords", List.class));
+                        // A lista de embedding do MongoDB virá como List<Double> (se o driver mapear corretamente)
+                        // ou List<Number>, então convertemos para List<Double>
+                        List<?> rawEmbedding = doc.get("embedding", List.class);
+                        if (rawEmbedding != null) {
+                            meditation.setEmbedding(rawEmbedding.stream()
+                                    .map(item -> ((Number) item).doubleValue())
+                                    .collect(Collectors.toList()));
+                        }
+                        return meditation;
+                    })
+                    .collect(Collectors.toList());
 
         } catch (Exception e) {
             logger.error("Erro inesperado ao buscar meditações no MongoDB: {}", e.getMessage(), e);
@@ -106,15 +125,18 @@ public class RecommendationService {
      * Método principal de recomendação.
      * @param keywords Palavras-chave fornecidas pelo usuário para recomendação.
      * @param limit Limite de recomendações.
-     * @return Uma lista de meditações recomendadas.
+     * @return Uma lista de DTOs de meditações recomendadas.
      */
-    public List<Document> recommendMeditations(String keywords, int limit) {
+    public List<MeditationDTO> recommendMeditations(String keywords, int limit) {
         // 1. Gera o embedding das palavras-chave usando a API Python
         List<Double> embedding = generateEmbedding(keywords);
 
         // 2. Usa o embedding para buscar meditações similares no MongoDB
-        List<Document> recommendedMeditations = searchMeditationsByVector(embedding, limit);
+        List<Meditation> recommendedMeditations = searchMeditationsByVector(embedding, limit);
 
-        return recommendedMeditations;
+        // 3. Mapeia os objetos Meditation para DTOs antes de retornar
+        return recommendedMeditations.stream()
+                .map(med -> new MeditationDTO(med.getId(), med.getName(), med.getType())) // Uso do record DTO
+                .collect(Collectors.toList());
     }
 }

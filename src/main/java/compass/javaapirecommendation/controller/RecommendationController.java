@@ -3,6 +3,7 @@ package compass.javaapirecommendation.controller;
 // Exemplo de Controller em compass.meditationrecommender.controller
 
 
+import compass.javaapirecommendation.entity.dto.MeditationDTO;
 import compass.javaapirecommendation.service.RecommendationService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
@@ -25,13 +26,19 @@ public class RecommendationController {
     public RecommendationController(RecommendationService recommendationService) {
         this.recommendationService = recommendationService;
     }
+    /**
+     * Endpoint para obter recomendações de meditações.
+     * @param keywords Palavras-chave fornecidas pelo usuário para a busca.
+     * @param limit O número máximo de meditações a serem recomendadas (padrão: 5).
+     * @return Uma resposta HTTP contendo a lista de DTOs de meditações recomendadas.
+     */
 
     @GetMapping("/recommend")
-    public ResponseEntity<List<Document>> getRecommendations(@RequestParam String keywords,
-                                                             @RequestParam(defaultValue = "5") int limit) {
+    public ResponseEntity<List<MeditationDTO>> getRecommendations(@RequestParam String keywords,
+                                                                  @RequestParam(defaultValue = "5") int limit) {
         logger.info("Requisição de recomendação recebida para keywords: '{}' com limite: {}", keywords, limit);
         try {
-            List<Document> recommendations = recommendationService.recommendMeditations(keywords, limit);
+            List<MeditationDTO> recommendations = recommendationService.recommendMeditations(keywords, limit);
             if (recommendations.isEmpty()) {
                 logger.warn("Nenhuma recomendação encontrada para keywords: {}", keywords);
                 return ResponseEntity.noContent().build(); // Retorna 204 No Content
