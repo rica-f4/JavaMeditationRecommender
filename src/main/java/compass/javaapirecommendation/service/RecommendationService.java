@@ -86,13 +86,25 @@ public class RecommendationService {
                             .append("path", "embedding") // O campo que contém o vetor no seu documento (corresponde ao seu modelo Meditation)
                             .append("numCandidates", 100) // Número de candidatos a considerar (ajuste para desempenho vs. precisão)
                             .append("limit", limit) // Limite de resultados a retornar
+                            .append("score", true) // Incluir pontuação de similaridade nos resultados
             );
 
             List<Document> results = collection.aggregate(
-                    Collections.singletonList(vectorSearchStage)
+                    List.of( // Usar List.of para múltiplos estágios
+                            vectorSearchStage,
+                            new Document("$project", new Document(
+                                    "_id", 1)
+                                    .append("name", 1)
+                                    .append("type", 1)
+                                    .append("keywords", 1)
+                                    .append("embedding", 1)
+                                    .append("score", new Document("$meta", "vectorSearchScore")) // Projetar o score
+                            )
+                    )
             ).into(new java.util.ArrayList<>());
 
             logger.info("Busca vetorial no MongoDB concluída. {} resultados brutos encontrados.", results.size());
+
 
             // Mapeia os documentos resultantes para objetos Meditation
             return results.stream()
@@ -111,6 +123,7 @@ public class RecommendationService {
                                     .map(item -> ((Number) item).doubleValue())
                                     .collect(Collectors.toList()));
                         }
+                        meditation.setScore(doc.getDouble("score")); // A pontuação de similaridade
                         return meditation;
                     })
                     .collect(Collectors.toList());
@@ -136,7 +149,7 @@ public class RecommendationService {
 
         // 3. Mapeia os objetos Meditation para DTOs antes de retornar
         return recommendedMeditations.stream()
-                .map(med -> new MeditationDTO(med.getId(), med.getName(), med.getType())) // Uso do record DTO
+                .map(med -> new MeditationDTO(med.getId(), med.getName(), med.getType(), med.getScore())) // Uso do record DTO
                 .collect(Collectors.toList());
     }
 }

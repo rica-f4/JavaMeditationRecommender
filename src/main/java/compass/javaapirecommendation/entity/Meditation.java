@@ -20,6 +20,7 @@ public class Meditation {
     private String type;
     private List<String> keywords;
     private List<Double> embedding;
+    private Double score;
 
 
 }
